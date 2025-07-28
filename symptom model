@@ -1,0 +1,87 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, classification_report
+import joblib
+from flask import Flask, request, jsonify
+
+# Load and preprocess the dataset
+def load_and_preprocess_data(file_path='Training.csv'):
+    # Read CSV file
+    df = pd.read_csv(file_path)
+    
+    # Separate features and target
+    X = df.drop('prognosis', axis=1)
+    y = df['prognosis']
+    
+    # Encode target labels
+    from sklearn.preprocessing import LabelEncoder
+    le = LabelEncoder()
+    y_encoded = le.fit_transform(y)
+    
+    # Save label encoder
+    joblib.dump(le, 'label_encoder.pkl')
+    
+    return X, y_encoded, le
+
+# Train the model
+def train_model(X, y):
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Scale features
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    # Train Random Forest Classifier
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train_scaled, y_train)
+    
+    # Evaluate model
+    y_pred = model.predict(X_test_scaled)
+    print("Accuracy:", accuracy_score(y_test, y_pred))
+    print("Classification Report:\n", classification_report(y_test, y_pred))
+    
+    # Save model and scaler
+    joblib.dump(model, 'model.pkl')
+    joblib.dump(scaler, 'scaler.pkl')
+    
+    return model, scaler
+
+# Flask API for predictions
+app = Flask(__name__)
+model = joblib.load('model.pkl')
+scaler = joblib.load('scaler.pkl')
+label_encoder = joblib.load('label_encoder.pkl')
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    try:
+        data = request.get_json(force=True)
+        features = np.array([data['features']])
+        
+        # Validate input
+        if features.shape[1] != model.n_features_in_:
+            return jsonify({'error': f'Expected {model.n_features_in_} features, got {features.shape[1]}'}), 400
+        
+        # Scale features and predict
+        features_scaled = scaler.transform(features)
+        prediction = model.predict(features_scaled)
+        prognosis = label_encoder.inverse_transform(prediction)[0]
+        
+        return jsonify({'prognosis': prognosis})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    # Load and preprocess data
+    X, y, le = load_and_preprocess_data()
+    
+    # Train and save model
+    model, scaler = train_model(X, y)
+    
+    # Run Flask app (for local testing)
+    app.run(debug=True, host='0.0.0.0', port=5000)
